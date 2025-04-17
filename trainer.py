@@ -1,11 +1,14 @@
 # llm_train/train.py
 from model import get_model
-from dataset import get_dataset_and_tokenizer
+from dataloader import get_dataset_and_tokenizer
 from transformers import Trainer, TrainingArguments, DataCollatorForLanguageModeling
 import os
 import wandb
 
-# === 初始化 wandb 项目 ===
+
+os.environ["WANDB_MODE"] = "offline"
+os.environ["HF_DATASETS_CACHE"]="/share/home/kexiaoyue/Desktop/LLM4EDA/hw1_llm_trainning/bookcorpus/"
+
 wandb.init(
     project="gpt2-small-train",
     name="bookcorpus-bsz2-epoch3",
@@ -17,20 +20,21 @@ wandb.init(
     }
 )
 
-# === 检查 checkpoint ===
-print("🟢 Start training script")
+
+
+print("Start training script")
 if os.path.exists("./logs/checkpoint-last"):
-    print("✅ Found checkpoint: logs/checkpoint-last. Will resume from checkpoint.")
+    print("Found checkpoint: logs/checkpoint-last. Will resume from checkpoint.")
 else:
-    print("🚀 No checkpoint found. Training will start from scratch.")
+    print("No checkpoint found. Training will start from scratch.")
 
-# === 加载数据和分词器 ===
-tokenizer, train_dataset, val_dataset = get_dataset_and_tokenizer(dataset_name="bookcorpus")
 
-# === 加载模型 ===
+tokenizer, train_dataset, val_dataset = get_dataset_and_tokenizer(dataset_name="bookcorpus",debug=True)
+
+
 model = get_model(vocab_size=tokenizer.vocab_size)
 
-# === 训练参数 ===
+
 training_args = TrainingArguments(
     output_dir="./logs",
     overwrite_output_dir=True,
@@ -46,7 +50,7 @@ training_args = TrainingArguments(
     report_to="wandb",
 )
 
-# === 开始训练 ===
+
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 trainer = Trainer(
     model=model,
@@ -58,6 +62,6 @@ trainer = Trainer(
 )
 trainer.train(resume_from_checkpoint=True)
 
-# === 保存模型 ===
+
 trainer.save_model("./logs/final_model")
-print("✅ Training complete! Model saved to ./logs/final_model")
+print("Training complete! Model saved to ./logs/final_model")
