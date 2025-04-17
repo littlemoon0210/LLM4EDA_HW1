@@ -1,72 +1,67 @@
-# llm_train/dataset.py
-from datasets import load_dataset
-from transformers import GPT2Tokenizer
+# llm_train/train.py
+from model import get_model
+from dataloader import get_dataset_and_tokenizer
+from transformers import Trainer, TrainingArguments, DataCollatorForLanguageModeling
 import os
+import wandb
 
-# 设置数据集缓存路径（确保是你上传的路径）
-os.environ["HF_DATASETS_CACHE"] = "/share/home/kexiaoyue/Desktop/LLM4EDA/hw1_llm_trainning/bookcorpus/"
 
-def get_dataset_and_tokenizer(dataset_name="bookcorpus", val_split=0.05, block_size=128, debug=False):
-    tokenizer = GPT2Tokenizer.from_pretrained("./gpt2_tokenizer")
-    tokenizer.pad_token = tokenizer.eos_token
+os.environ["WANDB_MODE"] = "offline"
+os.environ["HF_DATASETS_CACHE"]="/share/home/kexiaoyue/Desktop/LLM4EDA/hw1_llm_trainning/bookcorpus/"
 
-    # 加载原始数据集（从缓存路径）
-    dataset = load_dataset(dataset_name, split="train")
+wandb.init(
+    project="gpt2-small-train",
+    name="bookcorpus-bsz2-epoch3",
+    config={
+        "model": "GPT2-small",
+        "dataset": "bookcorpus",
+        "epochs": 3,
+        "batch_size": 2
+    }
+)
 
-    # 分词函数
-    def tokenize_function(examples):
-        return tokenizer(
-            examples["text"],
-            return_special_tokens_mask=True,
-            truncation=True,
-            max_length=512
-        )
 
-    tokenized = dataset.map(
-        tokenize_function,
-        batched=True,
-        remove_columns=["text"],
-        load_from_cache_file=False,
-        num_proc=os.cpu_count(),
-        desc="Tokenizing dataset"
-    )
 
-    # ✅ 添加映射后检查函数
-    if debug:
-        sample = tokenized[0]
-        print("[Debug] Tokenized sample keys:", sample.keys())
-        print("[Debug] input_ids length:", len(sample["input_ids"]))
-        print("[Debug] special_tokens_mask length:", len(sample["special_tokens_mask"]))
-        assert len(sample["input_ids"]) == len(sample["special_tokens_mask"]), "input_ids 和 special_tokens_mask 长度不一致"
+print("Start training script")
+if os.path.exists("./logs/checkpoint-last"):
+    print("Found checkpoint: logs/checkpoint-last. Will resume from checkpoint.")
+else:
+    print("No checkpoint found. Training will start from scratch.")
 
-    # 划分训练集和验证集
-    split = tokenized.train_test_split(test_size=val_split, seed=42)
-    train_dataset = split["train"]
-    val_dataset = split["test"]
 
-    # 切块函数：将 input_ids 切成 block_size 的一组组
-    def group_texts(examples):
-        concatenated = sum(examples["input_ids"], [])
-        total_len = (len(concatenated) // block_size) * block_size
-        return {
-            "input_ids": [concatenated[i:i + block_size] for i in range(0, total_len, block_size)]
-        }
+tokenizer, train_dataset, val_dataset = get_dataset_and_tokenizer(dataset_name="bookcorpus",debug=True)
 
-    train_dataset = train_dataset.map(
-        group_texts,
-        batched=True,
-        num_proc=os.cpu_count(),
-        desc="Grouping train set"
-    )
-    val_dataset = val_dataset.map(
-        group_texts,
-        batched=True,
-        num_proc=os.cpu_count(),
-        desc="Grouping val set"
-    )
 
-    if debug:
-        print("Grouped train sample:", train_dataset[0])
-        print("HF_DATASETS_CACHE:", os.environ.get("HF_DATASETS_CACHE"))
+model = get_model(vocab_size=tokenizer.vocab_size)
 
-    return tokenizer, train_dataset, val_dataset
+
+training_args = TrainingArguments(
+    output_dir="./logs",
+    overwrite_output_dir=True,
+    per_device_train_batch_size=2,
+    num_train_epochs=3,
+    save_strategy="steps",
+    save_steps=500,
+    save_total_limit=3,
+    logging_steps=100,
+    evaluation_strategy="steps",
+    eval_steps=500,
+    fp16=True,
+    report_to="wandb",
+)
+
+
+data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset,
+    tokenizer=tokenizer,
+    data_collator=data_collator,
+)
+trainer.train(resume_from_checkpoint=True)
+
+
+trainer.save_model("./logs/final_model")
+print("Training complete! Model saved to ./logs/final_model")
